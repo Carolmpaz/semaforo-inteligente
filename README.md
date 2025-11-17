@@ -2,7 +2,7 @@
 
 Este projeto faz parte da proposta de Smart City, onde semáforos não apenas controlam o tráfego, mas percebem o ambiente, se adaptam automaticamente e podem ser controlados online.
 Nosso grupo desenvolveu dois semáforos físicos conectados a um único ESP32, utilizando um sensor LDR para detectar luminosidade e alternar para modo noturno quando necessário.
-O sistema também envia e recebe dados via **MQTT**, permitindo alteração remota dos parâmetros de funcionamento por meio da plataforma **HiveMQ**.
+O sistema também envia e recebe dados via **MQTT**, permitindo alteração remota dos parâmetros de funcionamento por meio da plataforma desenvolvida.
 
 ---
 
