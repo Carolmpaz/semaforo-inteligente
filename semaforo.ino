@@ -18,25 +18,34 @@ PubSubClient client(espClient);
 
 // ================= PINOS ===================
 const int LED_VERMELHO_1 = 2;
-const int LED_AMARELO_1 = 4;
-const int LED_VERDE_1 = 16;
+const int LED_AMARELO_1  = 4;
+const int LED_VERDE_1    = 16;
 
 const int LED_VERMELHO_2 = 17;
-const int LED_AMARELO_2 = 5;
-const int LED_VERDE_2 = 18;
+const int LED_AMARELO_2  = 5;
+const int LED_VERDE_2    = 18;
 
 const int LDR_PIN = 34;
+
+// Ultrassônico
+const int TRIG_PIN = 26;
+const int ECHO_PIN = 25;
 
 // ================= CONFIG ===================
 int TEMPO_VERDE = 5000;
 int TEMPO_AMARELO = 2000;
 int TEMPO_TROCA = 1000;
 
-// LDR como sensor de luz ambiente
-int LIMIAR_LDR = 800;   
-int HIS = 50;   
+int LIMIAR_LDR = 800;
+int HIS = 50;
 
 int TEMPO_PISCA_NOITE = 500;
+
+// Ultrassônico
+int DISTANCIA_LIMIAR = 20;  // Menos que 20 cm = carro presente
+int TEMPO_EXTENSAO = 3000;  // Aumenta o verde em +3s
+
+bool carroPresente = false;
 
 // ================= FLAGS ===================
 bool modoNoturnoAtivo = false;
@@ -65,6 +74,15 @@ enum Estado {
 Estado estadoAtual = VERDE_1;
 
 // ==========================================================
+// ======================= PROTÓTIPOS ========================
+// ==========================================================
+void publicarMQTT();
+void lerLDR();
+void lerUltrassom();
+void modoNoturno();
+void cicloSemaforo();
+
+// ==========================================================
 // ======================= SETUP ============================
 // ==========================================================
 void setup() {
@@ -80,6 +98,10 @@ void setup() {
 
   pinMode(LDR_PIN, INPUT);
 
+  // Ultrassônico
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(200);
@@ -89,7 +111,7 @@ void setup() {
   client.setCallback(callback);
 }
 
-// MQTT 
+// ======================= MQTT =============================
 void reconectarMQTT() {
   while (!client.connected()) {
     if (client.connect("semaforo01")) {
@@ -107,16 +129,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == topic_comando_modo) {
     if (msg == "NOITE") {
       modoNoturnoForcado = true;
-      modoNoturnoAtivo   = true;
+      modoNoturnoAtivo = true;
       client.publish(topic_modo, "NOITE");
     } else {
       modoNoturnoForcado = false;
-      modoNoturnoAtivo   = false;
+      modoNoturnoAtivo = false;
       client.publish(topic_modo, "DIA");
     }
   }
 }
 
+// ==========================================================
+// ======================= LOOP =============================
+// ==========================================================
 void loop() {
   agora = millis();
 
@@ -124,6 +149,7 @@ void loop() {
   client.loop();
 
   lerLDR();
+  lerUltrassom();
   publicarMQTT();
 
   if (modoNoturnoAtivo) {
@@ -132,18 +158,19 @@ void loop() {
     cicloSemaforo();
   }
 }
-//LEITURA LDR
+
+// ==========================================================
+// ===================== LEITURA LDR ========================
+// ==========================================================
 void lerLDR() {
   if (agora - timerLDR >= INTERVALO_LDR) {
     timerLDR = agora;
 
     int leitura = analogRead(LDR_PIN);
-
     Serial.print("LDR = ");
     Serial.println(leitura);
 
     if (!modoNoturnoForcado) {
-
       if (leitura < (LIMIAR_LDR - HIS) && !modoNoturnoAtivo) {
         modoNoturnoAtivo = true;
         client.publish(topic_modo, "NOITE");
@@ -160,27 +187,48 @@ void lerLDR() {
   }
 }
 
-// MQTT OUT
+// ==========================================================
+// =================== LEITURA ULTRASSOM ====================
+// ==========================================================
+void lerUltrassom() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duracao = pulseIn(ECHO_PIN, HIGH);
+  int distancia = duracao * 0.034 / 2;
+
+  carroPresente = (distancia > 0 && distancia < DISTANCIA_LIMIAR);
+
+  Serial.print("Distância: ");
+  Serial.print(distancia);
+  Serial.print(" cm | Carro detectado: ");
+  Serial.println(carroPresente ? "SIM" : "NÃO");
+}
+
+// ==========================================================
+// ====================== MQTT OUT ==========================
+// ==========================================================
 void publicarMQTT() {
   if (agora - timerMQTT >= INTERVALO_MQTT) {
     timerMQTT = agora;
   }
 }
 
-// MODO NOTURNO 
+// ==========================================================
+// ==================== MODO NOTURNO ========================
+// ==========================================================
 void modoNoturno() {
-  //Serial.println("[MODO NOTURNO]");
-
   if (agora - timerPisca >= TEMPO_PISCA_NOITE) {
     timerPisca = agora;
 
-    int estadoPisca = digitalRead(LED_AMARELO_1) == LOW;
+    int estado = digitalRead(LED_AMARELO_1) == LOW;
 
-    // Pisca amarelo nos dois cruzamentos
-    digitalWrite(LED_AMARELO_1, estadoPisca);
-    digitalWrite(LED_AMARELO_2, estadoPisca);
+    digitalWrite(LED_AMARELO_1, estado);
+    digitalWrite(LED_AMARELO_2, estado);
 
-    // Desliga verde/vermelho
     digitalWrite(LED_VERDE_1, LOW);
     digitalWrite(LED_VERMELHO_1, LOW);
     digitalWrite(LED_VERDE_2, LOW);
@@ -188,25 +236,29 @@ void modoNoturno() {
   }
 }
 
-// SEMÁFORO NORMAL
+// ==========================================================
+// ================= SEMÁFORO NORMAL ========================
+// ==========================================================
 void cicloSemaforo() {
-  Serial.println("[MODO DIA]");
-
-  // Garante amarelos do noturno desligados
-  digitalWrite(LED_AMARELO_1, LOW);
-  digitalWrite(LED_AMARELO_2, LOW);
 
   switch (estadoAtual) {
 
     case VERDE_1:
-      digitalWrite(LED_VERMELHO_1, LOW);
       digitalWrite(LED_VERDE_1, HIGH);
       digitalWrite(LED_VERMELHO_2, HIGH);
 
-      if (agora - timerSemaforo >= TEMPO_VERDE) {
-        timerSemaforo = agora;
-        digitalWrite(LED_VERDE_1, LOW);
-        estadoAtual = AMARELO_1;
+      if (carroPresente) {
+        if (agora - timerSemaforo >= TEMPO_VERDE + TEMPO_EXTENSAO) {
+          timerSemaforo = agora;
+          digitalWrite(LED_VERDE_1, LOW);
+          estadoAtual = AMARELO_1;
+        }
+      } else {
+        if (agora - timerSemaforo >= TEMPO_VERDE) {
+          timerSemaforo = agora;
+          digitalWrite(LED_VERDE_1, LOW);
+          estadoAtual = AMARELO_1;
+        }
       }
       break;
 
