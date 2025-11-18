@@ -2,9 +2,9 @@
 node_modules/
 frontend/node_modules/
 
-# Production
-build/
+# Production builds
 frontend/build/
+dist/
 
 # Environment variables
 .env
@@ -30,3 +30,13 @@ lerna-debug.log*
 .DS_Store
 Thumbs.db
 
+# Vercel
+.vercel
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+*.log
+.cache/

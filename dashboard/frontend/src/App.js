@@ -3,7 +3,17 @@ import io from 'socket.io-client';
 import axios from 'axios';
 import './App.css';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+// Detecta automaticamente a URL da API baseada no ambiente
+const getApiUrl = () => {
+  // Em produção na Vercel, usa a URL atual
+  if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return window.location.origin;
+  }
+  // Em desenvolvimento, usa a variável de ambiente ou localhost
+  return process.env.REACT_APP_API_URL || 'http://localhost:3001';
+};
+
+const API_URL = getApiUrl();
 
 function App() {
   const [estado, setEstado] = useState({
@@ -23,124 +33,159 @@ function App() {
   useEffect(() => {
     console.log('🔌 Tentando conectar ao backend:', API_URL);
     
-    // Conectar ao WebSocket com opções de reconexão
-    const socket = io(API_URL, {
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: Infinity,
-      timeout: 20000,
-      transports: ['websocket', 'polling']
-    });
+    const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    let socket = null;
+    let pollingInterval = null;
+    let shouldConnect = true;
+    let contadorAtualizacao = 0; // Contador para controle de atualização MQTT
 
-    socket.on('connect', () => {
-      console.log('✅ Conectado ao servidor WebSocket:', socket.id);
-      setConectado(true);
-      setErroConexao(null);
-    });
+    // Em desenvolvimento, tenta usar WebSocket (Socket.IO)
+    if (isDevelopment) {
+      try {
+        socket = io(API_URL, {
+          reconnection: true,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 5000,
+          reconnectionAttempts: Infinity,
+          timeout: 20000,
+          transports: ['websocket', 'polling']
+        });
 
-    socket.on('connect_error', (error) => {
-      console.error('❌ Erro ao conectar:', error);
-      setConectado(false);
-      setErroConexao(`Erro de conexão: ${error.message}`);
-    });
+        socket.on('connect', () => {
+          console.log('✅ Conectado ao servidor WebSocket:', socket.id);
+          setConectado(true);
+          setErroConexao(null);
+        });
 
-    socket.on('disconnect', (reason) => {
-      console.log('⚠️ Desconectado do servidor:', reason);
-      setConectado(false);
-      if (reason === 'io server disconnect') {
-        // Servidor desconectou, precisa reconectar manualmente
-        socket.connect();
+        socket.on('connect_error', (error) => {
+          console.warn('⚠️ WebSocket não disponível, usando polling...', error.message);
+          setConectado(false);
+          // Fallback para polling
+          startPolling();
+        });
+
+        socket.on('disconnect', (reason) => {
+          console.log('⚠️ Desconectado do servidor:', reason);
+          setConectado(false);
+          if (reason === 'io server disconnect') {
+            socket.connect();
+          }
+        });
+
+        socket.on('reconnect', (attemptNumber) => {
+          console.log('🔄 Reconectado após', attemptNumber, 'tentativas');
+          setConectado(true);
+          setErroConexao(null);
+        });
+
+        socket.on('semaforo-update', (data) => {
+          console.log('📨 Atualização recebida via WebSocket:', data);
+          setEstado(data);
+        });
+
+        socket.on('modo-update', (data) => {
+          setEstado(prev => ({ ...prev, modo: data.modo }));
+        });
+
+        socket.on('ldr-update', (data) => {
+          setEstado(prev => ({ ...prev, ldrValor: data.valor }));
+        });
+
+        socket.on('estado-update', (data) => {
+          setEstado(prev => ({ ...prev, estado: data.estado }));
+        });
+
+        socket.on('ultrassom-update', (data) => {
+          setEstado(prev => ({ ...prev, distancia: data.distancia }));
+        });
+
+        socket.on('carro-update', (data) => {
+          setEstado(prev => ({ 
+            ...prev, 
+            carroPresente: data.carroPresente,
+            tempoExtendido: data.tempoExtendido
+          }));
+        });
+      } catch (error) {
+        console.warn('⚠️ Erro ao inicializar Socket.IO, usando polling:', error);
+        startPolling();
       }
-    });
+    } else {
+      // Em produção (Vercel), usa polling
+      startPolling();
+    }
 
-    socket.on('reconnect', (attemptNumber) => {
-      console.log('🔄 Reconectado após', attemptNumber, 'tentativas');
+    // Função de polling para atualização em tempo real
+    function startPolling() {
+      console.log('📡 Usando polling para atualização em tempo real');
       setConectado(true);
-      setErroConexao(null);
-    });
+      
+      // Buscar estado imediatamente
+      buscarEstado();
+      
+      // Polling a cada 1 segundo
+      pollingInterval = setInterval(() => {
+        if (shouldConnect) {
+          buscarEstado();
+        }
+      }, 1000);
+    }
 
-    socket.on('reconnect_attempt', () => {
-      console.log('🔄 Tentando reconectar...');
-      setErroConexao('Tentando reconectar...');
-    });
+    // Função para buscar estado do servidor
+    async function buscarEstado() {
+      try {
+        // Em produção (Vercel), tenta buscar do MQTT periodicamente
+        // A cada 5 chamadas (5 segundos), solicita atualização do MQTT
+        contadorAtualizacao++;
+        const deveAtualizar = contadorAtualizacao % 5 === 0; // Atualiza a cada 5 segundos
 
-    socket.on('reconnect_error', (error) => {
-      console.error('❌ Erro ao reconectar:', error);
-      setErroConexao('Erro ao reconectar. Verifique se o backend está rodando.');
-    });
+        const url = `${API_URL}/api/estado${deveAtualizar ? '?atualizar=true' : ''}`;
+        const response = await axios.get(url, {
+          timeout: 8000 // Timeout maior para permitir conexão MQTT
+        });
+        setEstado(response.data);
+        setErroConexao(null);
+        setConectado(true);
+      } catch (error) {
+        console.error('❌ Erro ao buscar estado:', error);
+        setConectado(false);
+        if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
+          setErroConexao('Erro de rede. Verifique sua conexão.');
+        } else {
+          setErroConexao(`Erro: ${error.message || 'Erro desconhecido'}`);
+        }
+      }
+    }
 
-    socket.on('reconnect_failed', () => {
-      console.error('❌ Falha ao reconectar');
-      setErroConexao('Falha ao reconectar. Verifique se o backend está rodando na porta 3001.');
-    });
-
-    socket.on('semaforo-update', (data) => {
-      console.log('📨 Atualização recebida:', data);
-      setEstado(data);
-    });
-
-    socket.on('modo-update', (data) => {
-      setEstado(prev => ({ ...prev, modo: data.modo }));
-    });
-
-    socket.on('ldr-update', (data) => {
-      setEstado(prev => ({ ...prev, ldrValor: data.valor }));
-    });
-
-    socket.on('estado-update', (data) => {
-      setEstado(prev => ({ ...prev, estado: data.estado }));
-    });
-
-    socket.on('ultrassom-update', (data) => {
-      setEstado(prev => ({ ...prev, distancia: data.distancia }));
-    });
-
-    socket.on('carro-update', (data) => {
-      setEstado(prev => ({ 
-        ...prev, 
-        carroPresente: data.carroPresente,
-        tempoExtendido: data.tempoExtendido
-      }));
-    });
-
-    // Verificar saúde do backend e buscar estado inicial
+    // Verificar saúde do backend inicialmente
     const verificarConexao = async () => {
       try {
-        // Primeiro verifica se o backend está respondendo
         console.log('🏥 Verificando saúde do backend...');
         const healthResponse = await axios.get(`${API_URL}/api/health`, {
           timeout: 5000
         });
         console.log('✅ Backend está saudável:', healthResponse.data);
-        
-        // Depois busca o estado
-        console.log('📡 Buscando estado inicial...');
-        const response = await axios.get(`${API_URL}/api/estado`, {
-          timeout: 5000
-        });
-        console.log('✅ Estado inicial recebido:', response.data);
-        setEstado(response.data);
+        setConectado(true);
         setErroConexao(null);
       } catch (error) {
-        console.error('❌ Erro ao conectar ao backend:', error);
-        if (error.code === 'ECONNREFUSED' || error.message.includes('ECONNREFUSED')) {
-          setErroConexao('Backend não está rodando. Inicie o servidor na porta 3001 com: npm start');
-        } else if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
-          setErroConexao('Erro de rede. Verifique se o backend está rodando em http://localhost:3001');
-        } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-          setErroConexao('Timeout ao conectar. O backend pode estar lento ou não está respondendo.');
-        } else {
-          setErroConexao(`Erro: ${error.message || 'Erro desconhecido'}`);
-        }
+        console.error('❌ Erro ao verificar saúde do backend:', error);
+        setConectado(false);
+        setErroConexao(`Erro ao conectar: ${error.message || 'Erro desconhecido'}`);
       }
     };
 
     verificarConexao();
 
     return () => {
-      console.log('🔌 Desconectando...');
-      socket.disconnect();
+      shouldConnect = false;
+      if (socket) {
+        console.log('🔌 Desconectando WebSocket...');
+        socket.disconnect();
+      }
+      if (pollingInterval) {
+        console.log('🛑 Parando polling...');
+        clearInterval(pollingInterval);
+      }
     };
   }, []);
 
