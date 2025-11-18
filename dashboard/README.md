@@ -187,8 +187,62 @@ A interface web permite:
   - Express
   - MQTT.js
   - Socket.IO
+  - Vercel Serverless Functions (para deploy)
 
 - **Frontend:**
   - React
-  - Socket.IO Client
+  - Socket.IO Client (desenvolvimento)
+  - Polling HTTP (produção/Vercel)
   - Axios
+
+## 🚀 Deploy na Vercel
+
+Este projeto está configurado para deploy na Vercel. Veja o arquivo [DEPLOY.md](./DEPLOY.md) para instruções completas.
+
+### Deploy Rápido
+
+```bash
+# Instalar Vercel CLI
+npm install -g vercel
+
+# Navegar até a pasta do dashboard
+cd semaforo-inteligente/dashboard
+
+# Fazer deploy
+vercel
+
+# Deploy em produção
+vercel --prod
+```
+
+### Configuração Automática
+
+O projeto detecta automaticamente o ambiente:
+- **Desenvolvimento local**: Usa WebSocket (Socket.IO) para atualizações em tempo real
+- **Produção (Vercel)**: Usa polling HTTP a cada 1 segundo (compatível com Serverless Functions)
+
+### Estrutura de Deploy
+
+```
+dashboard/
+├── api/              # Serverless Functions (Vercel)
+│   ├── health.js
+│   ├── estado.js
+│   ├── comando/
+│   │   └── modo.js
+│   └── websocket.js
+├── frontend/         # React SPA
+│   ├── src/
+│   └── build/        # Build de produção
+├── backend/          # Servidor Express (desenvolvimento local)
+│   └── server.js
+├── vercel.json       # Configuração Vercel
+└── package.json
+```
+
+### Variáveis de Ambiente (Vercel)
+
+No painel da Vercel, configure (opcional):
+- `MQTT_BROKER`: Broker MQTT (padrão: broker.hivemq.com)
+- `MQTT_PORT`: Porta MQTT (padrão: 1883)
+

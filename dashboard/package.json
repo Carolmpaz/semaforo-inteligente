@@ -7,9 +7,11 @@
     "start": "node backend/server.js",
     "dev": "nodemon backend/server.js",
     "frontend": "cd frontend && npm start",
-    "install-all": "npm install && cd frontend && npm install"
+    "install-all": "npm install && cd frontend && npm install",
+    "build": "cd frontend && npm run build",
+    "vercel-build": "cd frontend && npm install && npm run build"
   },
-  "keywords": ["iot", "mqtt", "semaforo"],
+  "keywords": ["iot", "mqtt", "semaforo", "vercel"],
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -20,6 +22,9 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.x"
   }
 }
 
